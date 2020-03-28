@@ -1,0 +1,13 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="eng">
+<head>
+    <meta charset="UTF-8">
+    <title>{%block title%} {%endblock%}</title>
+    <link rel="stylesheet" href="{% static 'Masters/style.css'%}">
+</head>
+<body>
+    {%block content %}
+    {%endblock%}
+</body>
+</html>
