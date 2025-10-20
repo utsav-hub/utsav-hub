@@ -5,6 +5,19 @@ networks:
     driver: bridge
 
 services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_DB: freightbooking
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [freight-net]
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -22,7 +35,11 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    depends_on: [rabbitmq]
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=freightbooking;Username=postgres;Password=postgres123"
+      JWT__SecretKey: "YourSuperSecretKeyThatIsAtLeast32CharactersLong!"
+      JWT__Issuer: "FreightBooking"
+      JWT__Audience: "FreightBooking"
+    depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 
   booking-api:
@@ -34,7 +51,11 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    depends_on: [rabbitmq]
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=freightbooking;Username=postgres;Password=postgres123"
+      JWT__SecretKey: "YourSuperSecretKeyThatIsAtLeast32CharactersLong!"
+      JWT__Issuer: "FreightBooking"
+      JWT__Audience: "FreightBooking"
+    depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 
   payment-api:
@@ -75,3 +96,6 @@ services:
     ports:
       - "8080:8080"
     networks: [freight-net]
+
+volumes:
+  postgres_data:
