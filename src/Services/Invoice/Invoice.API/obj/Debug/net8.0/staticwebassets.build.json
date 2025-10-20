@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "PxATLvAUXE8Y+SQDQbcChj8yQ7CZ+kt7BP2t6yShS/c=",
+  "Source": "Invoice.API",
+  "BasePath": "_content/Invoice.API",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
