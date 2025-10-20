@@ -1,0 +1,12 @@
+/workspace/src/BuildingBlocks/Shared.Contracts/bin/Debug/net8.0/Shared.Contracts.deps.json
+/workspace/src/BuildingBlocks/Shared.Contracts/bin/Debug/net8.0/Shared.Contracts.dll
+/workspace/src/BuildingBlocks/Shared.Contracts/bin/Debug/net8.0/Shared.Contracts.pdb
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.AssemblyInfoInputs.cache
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.AssemblyInfo.cs
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.csproj.CoreCompileInputs.cache
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.sourcelink.json
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.dll
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/refint/Shared.Contracts.dll
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/Shared.Contracts.pdb
+/workspace/src/BuildingBlocks/Shared.Contracts/obj/Debug/net8.0/ref/Shared.Contracts.dll
