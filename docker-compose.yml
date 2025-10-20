@@ -5,6 +5,16 @@ networks:
     driver: bridge
 
 services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks: [freight-net]
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -22,7 +32,13 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    depends_on: [rabbitmq]
+    environment:
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=scheduling_db;Username=postgres;Password=postgres
+      Jwt__Issuer: freight-platform
+      Jwt__Audience: freight-clients
+      Jwt__Key: your-very-strong-development-secret-change-me
+      Jwt__AccessTokenMinutes: 60
+    depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 
   booking-api:
@@ -34,7 +50,13 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    depends_on: [rabbitmq]
+    environment:
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=booking_db;Username=postgres;Password=postgres
+      Jwt__Issuer: freight-platform
+      Jwt__Audience: freight-clients
+      Jwt__Key: your-very-strong-development-secret-change-me
+      Jwt__AccessTokenMinutes: 60
+    depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 
   payment-api:

@@ -26,3 +26,14 @@ public record InvoiceIssued
     string Currency,
     DateTime IssuedUtc
 );
+
+public record ValidateSchedule
+(
+    Guid ScheduleId
+);
+
+public record ScheduleValidated
+(
+    Guid ScheduleId,
+    bool Exists
+);
