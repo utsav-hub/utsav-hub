@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using Shared.Contracts;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -53,6 +54,7 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddMassTransit(x =>
 {
     x.SetKebabCaseEndpointNameFormatter();
+    x.AddRequestClient<ValidateSchedule>();
     x.UsingRabbitMq((context, cfg) =>
     {
         var host = builder.Configuration["RABBITMQ_HOST"]
