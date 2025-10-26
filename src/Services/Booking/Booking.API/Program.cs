@@ -1,3 +1,6 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -12,34 +15,42 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks();
 
-// DbContext
+// PostgreSQL EF Core
 builder.Services.AddDbContext<BookingDbContext>(options =>
 {
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"));
+    var connectionString = builder.Configuration.GetConnectionString("Default")
+                           ?? builder.Configuration["ConnectionStrings:Default"]
+                           ?? builder.Configuration["ConnectionStrings__Default"]
+                           ?? "Host=localhost;Port=5432;Database=freight;Username=freight;Password=freight;";
+    options.UseNpgsql(connectionString);
 });
 
 // JWT Auth
-var jwtSection = builder.Configuration.GetSection("Jwt");
-var issuer = jwtSection["Issuer"];
-var audience = jwtSection["Audience"];
-var key = jwtSection["Key"] ?? "your-very-strong-development-secret-change-me";
-var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key));
+var jwtIssuer = builder.Configuration["JWT:Issuer"] ?? builder.Configuration["JWT__Issuer"] ?? "freight";
+var jwtAudience = builder.Configuration["JWT:Audience"] ?? builder.Configuration["JWT__Audience"] ?? "freight_clients";
+var jwtSecret = builder.Configuration["JWT:Secret"] ?? builder.Configuration["JWT__Secret"] ?? "dev_only_secret_change_me";
+var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = issuer,
-            ValidateAudience = true,
-            ValidAudience = audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = signingKey,
-            ValidateLifetime = true
-        };
-    });
+        ValidateIssuer = true,
+        ValidIssuer = jwtIssuer,
+        ValidateAudience = true,
+        ValidAudience = jwtAudience,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = signingKey,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromSeconds(30)
+    };
+});
 
+// MassTransit + RabbitMQ
 builder.Services.AddMassTransit(x =>
 {
     x.SetKebabCaseEndpointNameFormatter();
@@ -73,33 +84,39 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Ensure database exists (dev-only)
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<BookingDbContext>();
-    db.Database.EnsureCreated();
-}
-
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready");
 
+// Token endpoint (demo only)
+app.MapPost("/api/token", (string userId) =>
+{
+    var claims = new[]
+    {
+        new Claim(JwtRegisteredClaimNames.Sub, userId),
+        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+    };
+    var creds = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
+    var token = new JwtSecurityToken(
+        issuer: jwtIssuer,
+        audience: jwtAudience,
+        claims: claims,
+        expires: DateTime.UtcNow.AddHours(1),
+        signingCredentials: creds
+    );
+    var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+    return Results.Ok(new { access_token = tokenString });
+}).WithName("CreateToken").WithOpenApi();
+
+// CRUD-like endpoints (secured)
 app.MapGet("/api/bookings", async (BookingDbContext db) =>
 {
-    var items = await db.Bookings.AsNoTracking().ToListAsync();
-    return Results.Ok(items);
-}).RequireAuthorization()
-  .WithName("GetBookings").WithOpenApi();
+    var bookings = await db.Bookings.OrderByDescending(b => b.CreatedUtc).ToListAsync();
+    return Results.Ok(bookings);
+}).RequireAuthorization().WithName("GetBookings").WithOpenApi();
 
-app.MapPost("/api/bookings", async (CreateBookingRequest request, BookingDbContext db, IPublishEndpoint publishEndpoint, IRequestClient<ValidateSchedule> scheduleValidator) =>
+app.MapPost("/api/bookings", async (CreateBookingRequest request, BookingDbContext db, IPublishEndpoint bus) =>
 {
-    // validate schedule exists via RabbitMQ request/response
-    var validationResponse = await scheduleValidator.GetResponse<ScheduleValidated>(new ValidateSchedule(request.scheduleId));
-    if (!validationResponse.Message.Exists)
-    {
-        return Results.BadRequest(new { error = "Schedule not found" });
-    }
-
-    var booking = new Booking
+    var entity = new Booking
     {
         Id = Guid.NewGuid(),
         ScheduleId = request.scheduleId,
@@ -107,49 +124,36 @@ app.MapPost("/api/bookings", async (CreateBookingRequest request, BookingDbConte
         Status = "Pending",
         CreatedUtc = DateTime.UtcNow
     };
-    db.Bookings.Add(booking);
+    db.Bookings.Add(entity);
     await db.SaveChangesAsync();
 
-    await publishEndpoint.Publish(new Shared.Contracts.BookingCreated(booking.Id, booking.ScheduleId, booking.CustomerId, booking.CreatedUtc));
+    await bus.Publish(new BookingCreated(entity.Id, entity.ScheduleId, entity.CustomerId, entity.CreatedUtc));
 
-    return Results.Created($"/api/bookings/{booking.Id}", booking);
-}).RequireAuthorization()
-  .WithName("CreateBooking").WithOpenApi();
+    return Results.Created($"/api/bookings/{entity.Id}", entity);
+}).RequireAuthorization().WithName("CreateBooking").WithOpenApi();
 
-// minimal endpoint to issue JWT for testing purposes only
-app.MapPost("/auth/token", (JwtTokenRequest req) =>
+// Ensure database exists
+using (var scope = app.Services.CreateScope())
 {
-    var claims = new[] { new System.Security.Claims.Claim("sub", req.userId.ToString()) };
-    var tokenDescriptor = new System.IdentityModel.Tokens.Jwt.SecurityTokenDescriptor
-    {
-        Subject = new System.Security.Claims.ClaimsIdentity(claims),
-        Expires = DateTime.UtcNow.AddMinutes(int.Parse(jwtSection["AccessTokenMinutes"] ?? "60")),
-        Issuer = issuer,
-        Audience = audience,
-        SigningCredentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256)
-    };
-    var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-    var token = handler.CreateToken(tokenDescriptor);
-    var jwt = handler.WriteToken(token);
-    return Results.Ok(new { access_token = jwt, token_type = "Bearer" });
-}).WithName("IssueToken").WithOpenApi();
+    var db = scope.ServiceProvider.GetRequiredService<BookingDbContext>();
+    db.Database.EnsureCreated();
+}
 
 app.Run();
 
 public record CreateBookingRequest(Guid scheduleId, Guid customerId);
-public record JwtTokenRequest(Guid userId);
 
-public sealed class BookingDbContext : DbContext
-{
-    public BookingDbContext(DbContextOptions<BookingDbContext> options) : base(options) { }
-    public DbSet<Booking> Bookings => Set<Booking>();
-}
-
-public sealed class Booking
+public class Booking
 {
     public Guid Id { get; set; }
     public Guid ScheduleId { get; set; }
     public Guid CustomerId { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedUtc { get; set; }
+}
+
+public class BookingDbContext : DbContext
+{
+    public BookingDbContext(DbContextOptions<BookingDbContext> options) : base(options) { }
+    public DbSet<Booking> Bookings => Set<Booking>();
 }

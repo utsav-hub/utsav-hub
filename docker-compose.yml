@@ -6,15 +6,19 @@ networks:
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: postgres
     environment:
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: freight
+      POSTGRES_PASSWORD: freight
+      POSTGRES_DB: freight
     ports:
       - "5432:5432"
+    networks: [freight-net]
     volumes:
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     networks: [freight-net]
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -32,12 +36,10 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    environment:
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=scheduling_db;Username=postgres;Password=postgres
-      Jwt__Issuer: freight-platform
-      Jwt__Audience: freight-clients
-      Jwt__Key: your-very-strong-development-secret-change-me
-      Jwt__AccessTokenMinutes: 60
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=freight;Username=freight;Password=freight;
+      JWT__Issuer: freight
+      JWT__Audience: freight_clients
+      JWT__Secret: super_secret_signing_key_change_me_please_1234567890
     depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 
@@ -50,12 +52,10 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: guest
       RABBITMQ_PASSWORD: guest
-    environment:
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=booking_db;Username=postgres;Password=postgres
-      Jwt__Issuer: freight-platform
-      Jwt__Audience: freight-clients
-      Jwt__Key: your-very-strong-development-secret-change-me
-      Jwt__AccessTokenMinutes: 60
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=freight;Username=freight;Password=freight;
+      JWT__Issuer: freight
+      JWT__Audience: freight_clients
+      JWT__Secret: super_secret_signing_key_change_me_please_1234567890
     depends_on: [rabbitmq, postgres]
     networks: [freight-net]
 

@@ -1,9 +1,9 @@
+using System.Text;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using System.Text;
 using Shared.Contracts;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,38 +12,45 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks();
 
-// DbContext
 builder.Services.AddDbContext<SchedulingDbContext>(options =>
 {
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"));
+    var connectionString = builder.Configuration.GetConnectionString("Default")
+                           ?? builder.Configuration["ConnectionStrings:Default"]
+                           ?? builder.Configuration["ConnectionStrings__Default"]
+                           ?? "Host=localhost;Port=5432;Database=freight;Username=freight;Password=freight;";
+    options.UseNpgsql(connectionString);
 });
 
-// JWT Auth
-var jwtSection = builder.Configuration.GetSection("Jwt");
-var issuer = jwtSection["Issuer"];
-var audience = jwtSection["Audience"];
-var key = jwtSection["Key"] ?? "your-very-strong-development-secret-change-me";
-var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key));
+var jwtIssuer = builder.Configuration["JWT:Issuer"] ?? builder.Configuration["JWT__Issuer"] ?? "freight";
+var jwtAudience = builder.Configuration["JWT:Audience"] ?? builder.Configuration["JWT__Audience"] ?? "freight_clients";
+var jwtSecret = builder.Configuration["JWT:Secret"] ?? builder.Configuration["JWT__Secret"] ?? "dev_only_secret_change_me";
+var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = issuer,
-            ValidateAudience = true,
-            ValidAudience = audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = signingKey,
-            ValidateLifetime = true
-        };
-    });
+        ValidateIssuer = true,
+        ValidIssuer = jwtIssuer,
+        ValidateAudience = true,
+        ValidAudience = jwtAudience,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = signingKey,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromSeconds(30)
+    };
+});
 
 builder.Services.AddMassTransit(x =>
 {
     x.SetKebabCaseEndpointNameFormatter();
-    x.AddConsumer<ValidateScheduleConsumer>();
+
+    x.AddConsumer<BookingCreatedConsumer>();
+
     x.UsingRabbitMq((context, cfg) =>
     {
         var host = builder.Configuration["RABBITMQ_HOST"]
@@ -73,78 +80,70 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Ensure database exists (dev-only)
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready");
+
+app.MapGet("/api/schedules", async (SchedulingDbContext db) =>
+{
+    var schedules = await db.Schedules.OrderByDescending(s => s.DepartureUtc).ToListAsync();
+    return Results.Ok(schedules);
+}).RequireAuthorization().WithName("GetSchedules").WithOpenApi();
+
+app.MapPost("/api/schedules", async (ScheduleRequest request, SchedulingDbContext db) =>
+{
+    var entity = new Schedule
+    {
+        Id = Guid.NewGuid(),
+        Route = request.route,
+        DepartureUtc = request.departureUtc
+    };
+    db.Schedules.Add(entity);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/schedules/{entity.Id}", entity);
+}).RequireAuthorization().WithName("CreateSchedule").WithOpenApi();
+
+// Ensure database exists
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
     db.Database.EnsureCreated();
 }
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
-app.MapHealthChecks("/health/ready");
-
-app.MapGet("/api/schedules", async (SchedulingDbContext db) =>
-{
-    var items = await db.Schedules.AsNoTracking().ToListAsync();
-    return Results.Ok(items);
-})
-.RequireAuthorization()
-.WithName("GetSchedules")
-.WithOpenApi();
-
-// minimal endpoint to verify auth works
-app.MapGet("/auth/ping", () => Results.Ok(new { ok = true, utc = DateTime.UtcNow }))
-   .RequireAuthorization()
-   .WithName("AuthPing").WithOpenApi();
-
-app.MapPost("/api/schedules", async (ScheduleRequest request, SchedulingDbContext db, IPublishEndpoint publishEndpoint) =>
-{
-    var schedule = new Schedule
-    {
-        Id = Guid.NewGuid(),
-        Route = request.route,
-        DepartureUtc = request.departureUtc
-    };
-    db.Schedules.Add(schedule);
-    await db.SaveChangesAsync();
-
-    // Optional: publish an event for new schedule (not defined yet)
-    // await publishEndpoint.Publish(new Shared.Contracts.ScheduleCreated(schedule.Id, schedule.Route, schedule.DepartureUtc));
-
-    return Results.Created($"/api/schedules/{schedule.Id}", schedule);
-})
-.RequireAuthorization()
-.WithName("CreateSchedule")
-.WithOpenApi();
-
 app.Run();
 
 public record ScheduleRequest(string route, DateTime departureUtc);
 
-public sealed class SchedulingDbContext : DbContext
-{
-    public SchedulingDbContext(DbContextOptions<SchedulingDbContext> options) : base(options) { }
-    public DbSet<Schedule> Schedules => Set<Schedule>();
-}
-
-public sealed class Schedule
+public class Schedule
 {
     public Guid Id { get; set; }
     public string Route { get; set; } = string.Empty;
     public DateTime DepartureUtc { get; set; }
 }
 
-public sealed class ValidateScheduleConsumer : IConsumer<ValidateSchedule>
+public class SchedulingDbContext : DbContext
+{
+    public SchedulingDbContext(DbContextOptions<SchedulingDbContext> options) : base(options) { }
+    public DbSet<Schedule> Schedules => Set<Schedule>();
+}
+
+public class BookingCreatedConsumer : IConsumer<BookingCreated>
 {
     private readonly SchedulingDbContext _db;
-    public ValidateScheduleConsumer(SchedulingDbContext db)
+
+    public BookingCreatedConsumer(SchedulingDbContext db)
     {
         _db = db;
     }
 
-    public async Task Consume(ConsumeContext<ValidateSchedule> context)
+    public async Task Consume(ConsumeContext<BookingCreated> context)
     {
-        var exists = await _db.Schedules.AsNoTracking().AnyAsync(s => s.Id == context.Message.ScheduleId);
-        await context.RespondAsync(new ScheduleValidated(context.Message.ScheduleId, exists));
+        // Example: when a booking is created, we might adjust schedule capacity, etc.
+        // For demo, just ensure schedule exists placeholder.
+        var scheduleId = context.Message.ScheduleId;
+        var schedule = await _db.Schedules.FindAsync(scheduleId);
+        if (schedule == null)
+        {
+            // no-op in this demo
+        }
     }
 }
